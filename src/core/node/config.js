@@ -11,18 +11,26 @@
  * TODO: Remove all side-effects and use a constructor?
  * This module has side effects, sequentially setting up the environment.
  */
-import { atob, btoa } from "buffer";
+import { atob, btoa } from "node:buffer";
 import process from "node:process";
-import * as util from "./util.js";
+import * as dnst from "../../core/node/dns-transport.js";
+import * as system from "../../system.js";
+import EnvManager from "../env.js";
+import Log from "../log.js";
+import { services, stopAfter } from "../svc.js";
 import * as blocklists from "./blocklists.js";
 import * as dbip from "./dbip.js";
-import Log from "../log.js";
-import * as system from "../../system.js";
-import { services, stopAfter } from "../svc.js";
-import EnvManager from "../env.js";
-import * as swap from "../linux/swap.js";
+import * as util from "./util.js";
 
-(async (main) => {
+// some of the cjs node globals aren't available in esm
+// nodejs.org/docs/latest/api/globals.html
+// github.com/webpack/webpack/issues/14072
+// import path from "path";
+// import { fileURLToPath } from "url";
+// globalThis.__filename = fileURLToPath(import.meta.url);
+// globalThis.__dirname = path.dirname(__filename);
+
+((main) => {
   system.when("prepare").then(prep);
   system.when("steady").then(up);
 })();
@@ -59,8 +67,6 @@ async function prep() {
   // for local non-prod nodejs deploys with self-signed certs).
   // If requisite TLS secrets are missing, set tlsoffload to true, eventually.
   let tlsoffload = envManager.get("TLS_OFFLOAD");
-  const _TLS_CRT_AND_KEY =
-    eval(`process.env.TLS_${process.env.TLS_CN}`) || process.env.TLS_;
   const TLS_CERTKEY = process.env.TLS_CERTKEY;
 
   if (tlsoffload) {
@@ -68,17 +74,19 @@ async function prep() {
   } else if (isProd) {
     if (TLS_CERTKEY) {
       const [tlsKey, tlsCrt] = util.getCertKeyFromEnv(TLS_CERTKEY);
-      envManager.set("TLS_KEY", tlsKey);
-      envManager.set("TLS_CRT", tlsCrt);
+      setTlsVars(tlsKey, tlsCrt);
       log.i("env (fly) tls setup with tls_certkey");
-    } else if (_TLS_CRT_AND_KEY) {
-      const [tlsKey, tlsCrt] = util.getCertKeyFromEnv(_TLS_CRT_AND_KEY);
-      envManager.set("TLS_KEY", tlsKey);
-      envManager.set("TLS_CRT", tlsCrt);
-      log.i("[deprecated] env (fly) tls setup with tls_cn");
     } else {
-      log.w("Skip TLS: neither TLS_CERTKEY nor TLS_CN set; enable TLS offload");
-      tlsoffload = true;
+      const _TLS_CRT_AND_KEY =
+        eval(`process.env.TLS_${process.env.TLS_CN}`) || process.env.TLS_;
+      if (_TLS_CRT_AND_KEY) {
+        const [tlsKey, tlsCrt] = util.getCertKeyFromEnv(_TLS_CRT_AND_KEY);
+        setTlsVars(tlsKey, tlsCrt);
+        log.i("[deprecated] env (fly) tls setup with tls_cn");
+      } else {
+        log.w("Skip TLS: TLS_CERTKEY nor TLS_CN set; enable TLS offload");
+        tlsoffload = true;
+      }
     }
   } else {
     try {
@@ -87,9 +95,10 @@ async function prep() {
         envManager.get("TLS_KEY_PATH"),
         envManager.get("TLS_CRT_PATH")
       );
-      envManager.set("TLS_KEY", tlsKey);
-      envManager.set("TLS_CRT", tlsCrt);
-      log.i("dev (local) tls setup from tls_key_path");
+      setTlsVars(tlsKey, tlsCrt);
+      const l1 = tlsKey.byteLength;
+      const l2 = tlsCrt.byteLength;
+      log.i("dev (local) tls setup from tls_key_path", l1, l2);
     } catch (ex) {
       // this can happen when running server in BLOCKLIST_DOWNLOAD_ONLY mode
       log.w("Skipping TLS: test TLS crt/key missing; enable TLS offload");
@@ -107,16 +116,19 @@ async function prep() {
     log.i("no atob/btoa polyfill required");
   }
 
-  /** Swap on Fly */
-  if (onFly) {
-    const ok = swap.mkswap();
-    log.i("mkswap done?", ok);
-  } else {
-    log.i("no swap required");
-  }
+  // TODO: move dns* related settings to env
+  // flydns is always ipv6 (fdaa::53)
+  const plainOldDnsIp = onFly ? "fdaa::3" : "1.1.1.2";
+  const dns53 = dnst.makeTransport(plainOldDnsIp);
+  log.i("imported udp/tcp dns transport", plainOldDnsIp);
 
-  /** signal ready */
-  system.pub("ready");
+  // signal ready
+  system.pub("ready", [dns53]);
+}
+
+function setTlsVars(tlsKey, tlsCrt) {
+  envManager.set("TLS_KEY", tlsKey);
+  envManager.set("TLS_CRT", tlsCrt);
 }
 
 async function up() {
@@ -143,6 +155,8 @@ async function up() {
   }
 
   process.on("SIGINT", (sig) => stopAfter());
+
+  process.on("warning", (e) => console.warn(e.stack));
 
   // signal all system are-a go
   system.pub("go");

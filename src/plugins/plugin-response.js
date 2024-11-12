@@ -9,6 +9,8 @@
 import * as util from "../commons/util.js";
 import * as bufutil from "../commons/bufutil.js";
 
+/** @typedef {import("./users/auth-token.js").Outcome} AuthOutcome */
+
 export class RResp {
   constructor(data = null, hasex = false, exfrom = "", exstack = "") {
     /** @type {RespData?} */
@@ -30,12 +32,33 @@ export class RespData {
     this.flag = flag || "";
     /** @type {Object} */
     this.dnsPacket = packet || null;
-    /** @type {ArrayBuffer} */
+    /** @type {ArrayBuffer?} */
     this.dnsBuffer = raw || null;
-    /** @type {Object?} */
+    /** @type {BStamp|boolean} */
     this.stamps = stamps || {};
+    /** @type {AuthOutcome?} */
+    this.userAuth = null;
+    /** @type {BlockstampInfo?} */
+    this.userBlocklistInfo = null;
+    /** @type {String} */
+    this.dnsResolverUrl = "";
+    /** @type {string} */
+    this.userBlocklistFlag = "";
   }
 }
+
+export class BlockstampInfo {
+  constructor() {
+    /** @type {Uint16Array} */
+    this.userBlocklistFlagUint = null;
+    /** @type {String} - mosty 0 or 1 */
+    this.flagVersion = "0";
+  }
+}
+
+/**
+ * @typedef {Object.<string, Uint16Array>} BStamp
+ */
 
 /** @returns {RResp} */
 export function emptyResponse() {
@@ -54,6 +77,12 @@ export function errResponse(id, err) {
   return new RResp(data, hasex, id, st);
 }
 
+/**
+ * @param {Object} packet
+ * @param {ArrayBuffer} raw
+ * @param {BStamp?} stamps
+ * @returns {RespData}
+ */
 export function dnsResponse(packet = null, raw = null, stamps = null) {
   if (util.emptyObj(packet) || bufutil.emptyBuf(raw)) {
     throw new Error("empty packet for dns-res");

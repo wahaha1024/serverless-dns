@@ -12,8 +12,13 @@ import * as util from "../commons/util.js";
 import * as dnsutil from "../commons/dnsutil.js";
 import IOState from "./io-state.js";
 
+// TODO: define FetchEventLike
 /**
- * @param {FetchEvent} event
+ * @typedef {any} FetchEventLike
+ */
+
+/**
+ * @param {FetchEvent|FetchEventLike} event
  * @returns {Promise<Response>}
  */
 export function handleRequest(event) {
@@ -56,11 +61,20 @@ function optionsRequest(request) {
   return request.method === "OPTIONS";
 }
 
+/**
+ * @param {IOState} io
+ * @param {Error} err
+ */
 function errorResponse(io, err = null) {
   const eres = pres.errResponse("doh.js", err);
   io.dnsExceptionResponse(eres);
 }
 
+/**
+ * @param {IOState} io
+ * @param {string} ua
+ * @returns {Response}
+ */
 function withCors(io, ua) {
   if (util.fromBrowser(ua)) io.setCorsHeadersIfNeeded();
   return io.httpResponse;

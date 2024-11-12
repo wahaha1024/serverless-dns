@@ -54,11 +54,20 @@ module.exports = {
     "max-len": [
       "error",
       {
-        code: 80,
+        code: 120,
         ignoreComments: true,
         ignoreUrls: true,
         ignoreStrings: true,
         ignoreTemplateLiterals: true,
+      },
+    ],
+    "generator-star-spacing": [
+      "error",
+      {
+        before: false,
+        after: true, // function* () {}
+        anonymous: "neither", // function*() {}
+        method: { before: false, after: false }, // { *gen() {} }
       },
     ],
 

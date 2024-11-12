@@ -5,8 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as util from "../../commons/util.js";
 import * as bufutil from "../../commons/bufutil.js";
 import * as envutil from "../../commons/envutil.js";
@@ -18,8 +18,11 @@ const geo6name = "dbip.v6";
 
 /** @param {LogPusher} lp */
 export async function setup(lp) {
-  if (!lp || !envutil.hasDisk()) return false;
-
+  if (!lp) return false;
+  // in download only mode, logpush enable/disable is ignored
+  if (!envutil.logpushEnabled() && !envutil.blocklistDownloadOnly()) {
+    return false;
+  }
   const url = envutil.geoipUrl();
   const timestamp = timestampFromUrl(url);
 
@@ -91,8 +94,9 @@ function setupLocally(lp, timestamp) {
 }
 
 function hasDbipFiles(timestamp) {
-  const [g4, g6] = getFilePaths(timestamp);
+  if (!envutil.hasDisk()) return false;
 
+  const [g4, g6] = getFilePaths(timestamp);
   return fs.existsSync(g4) && fs.existsSync(g6);
 }
 

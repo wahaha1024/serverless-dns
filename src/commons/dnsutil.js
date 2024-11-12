@@ -18,19 +18,10 @@ export const dnsPacketHeaderSize = 12;
 export const minDNSPacketSize = dnsPacketHeaderSize + 5;
 export const maxDNSPacketSize = 4096;
 
-// TODO: move _dns* related settings to env
-const _dnsCloudflareSec4 = "1.1.1.2";
-const _dnsFly6 = "fdaa::3";
-const _dnsCacheSize = 20000;
+const _dnsCacheSize = 30000;
 
 const _minRequestTimeout = 4000; // 4s
 const _maxRequestTimeout = 30000; // 30s
-
-export function dnsaddr() {
-  // flydns is always ipv6 (fdaa::53)
-  if (envutil.recursive()) return _dnsFly6;
-  return _dnsCloudflareSec4;
-}
 
 export function cacheSize() {
   return _dnsCacheSize;
@@ -54,7 +45,7 @@ export function mkQ(qid, qs) {
 
 export function servfail(qid, qs) {
   // qid == 0 is valid; in fact qid is set to 0 by most doh clients
-  if (qid == null || qid < 0 || util.emptyArray(qs)) return null;
+  if (qid == null || qid < 0 || util.emptyArray(qs)) return bufutil.ZEROAB;
 
   return encode({
     id: qid,
@@ -65,13 +56,13 @@ export function servfail(qid, qs) {
 }
 
 export function servfailQ(q) {
-  if (bufutil.emptyBuf(q)) return null;
+  if (bufutil.emptyBuf(q)) return bufutil.ZEROAB;
 
   try {
     const p = decode(q);
     return servfail(p.id, p.questions);
   } catch (e) {
-    return null;
+    return bufutil.ZEROAB;
   }
 }
 
@@ -128,6 +119,49 @@ export function hasDnssecOk(packet) {
     if (a.flag_do || ((a.flags >> 15) & 0x1) === 1) return true;
   }
   return false;
+}
+
+/**
+ * @param {any} packet
+ * @returns {[any, boolean]}
+ */
+export function dropOPT(packet) {
+  let rmv = false;
+  if (util.emptyObj(packet)) return [packet, rmv];
+  if (util.emptyArray(packet.additionals)) return [packet, rmv];
+  /*
+    additionals: [{
+      name: '.', // same question as root
+      type: 'OPT',
+      udpPayloadSize: 4096,
+      extendedRcode: 0,
+      ednsVersion: 0,
+      flags: 32768,
+      flag_do: true, // dnssec ok
+      options: [
+        {}, {}, {} ...
+      ],
+    }, ... ]
+  */
+  const filtered = [];
+  for (const a of packet.additionals) {
+    if (optAnswer(a)) {
+      // github.com/mafintosh/dns-packet/blob/7b6662025c/index.js#L711
+      // case 3 (nsid), 10 (cookie) not encoded
+      // case 5, 6, 7 not implemented
+      // case 8 (ecs), 11 (keep-alive) discarded
+      // case 12 (padding) discarded from caches
+      // case 9 (expire), 13 (chain) experimental, not supported
+      // case 14 (key-tag)
+      rmv = true;
+      continue;
+    }
+    filtered.push(a);
+  }
+  if (rmv) {
+    packet.additionals = filtered;
+  }
+  return [packet, rmv];
 }
 
 export function dropECS(packet) {
@@ -343,9 +377,19 @@ export function isAnswerQuad0(packet) {
   return isAnswerBlocked(packet.answers);
 }
 
+export function ttl(packet) {
+  if (!hasAnswers(packet)) return 0;
+  return packet.answers[0].ttl || 0;
+}
+
+/**
+ * @param {any} dnsPacket
+ * @returns {string[]}
+ */
 export function extractDomains(dnsPacket) {
   if (!hasSingleQuestion(dnsPacket)) return [];
 
+  /** @type {string} */
   const names = new Set();
   const answers = dnsPacket.answers;
 
@@ -382,7 +426,7 @@ export function extractDomains(dnsPacket) {
 
 export function getInterestingAnswerData(packet, maxlen = 80, delim = "|") {
   if (!hasAnswers(packet)) {
-    return !util.emptyObj(packet) ? packet.rcode || "WTF" : "WTF";
+    return !util.emptyObj(packet) ? packet.rcode || "WTF1" : "WTF2";
   }
 
   // set to true if at least one ip has been captured from ans
@@ -501,6 +545,10 @@ export function getQueryType(packet) {
   return util.emptyString(qt) ? false : qt;
 }
 
+/**
+ * @param {string?} n
+ * @returns {string}
+ */
 export function normalizeName(n) {
   if (util.emptyString(n)) return n;
 
